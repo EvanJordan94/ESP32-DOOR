@@ -1,0 +1,11 @@
+logs/
+access_data.json
+data.json
+.env
+.vscode/
+__pycache__/
+*.pyc
+code_server/dataset/
+code_server/trainer/
+code_server/face_metadata.json
+code_server/names.txt

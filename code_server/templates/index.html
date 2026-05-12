@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="vi">
+
+<head>
+  <meta charset="UTF-8">
+  <title>ESP32-CAM + AI + MQTT</title>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <style>
+    body {
+      font-family: 'Roboto', sans-serif;
+      background-color: #f4f6f8;
+      color: #2c3e50;
+      padding: 30px;
+      text-align: center;
+    }
+
+    h2 {
+      color: #34495e;
+    }
+
+    .box {
+      background-color: #ffffff;
+      border-radius: 10px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+      padding: 20px;
+      margin: 20px auto;
+      width: 90%;
+      max-width: 800px;
+      text-align: left;
+    }
+
+    .box h3 {
+      color: #2980b9;
+      margin-top: 0;
+    }
+
+    .value {
+      font-weight: bold;
+      font-size: 18px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      padding: 10px;
+      border-bottom: 1px solid #ddd;
+      text-align: center;
+    }
+
+    th {
+      background-color: #ecf0f1;
+      color: #2c3e50;
+    }
+
+    tr:hover {
+      background-color: #f9f9f9;
+    }
+
+    pre {
+      background-color: #f7f7f7;
+      padding: 10px;
+      border-radius: 8px;
+      overflow-x: auto;
+    }
+
+    .btn-clear {
+      background-color: #e74c3c;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 6px;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+
+    .btn-clear:hover {
+      background-color: #c0392b;
+    }
+  </style>
+</head>
+
+<body>
+
+  <h2>📷 Hệ thống Nhận diện khuôn mặt ESP32 + AI + MQTT</h2>
+  <img id="cam" width="260" style="border: 2px solid #333; border-radius: 8px; margin-bottom: 1px;">
+
+
+  <div class="box">
+    <h3>Kết quả nhận diện AI</h3>
+    <div id="result-box">⏳ Đang xử lý...</div>
+  </div>
+
+  <div class="box" id="mqtt-box">
+    <h3>Dữ liệu MQTT (access_data)</h3>
+    <div>⏳ Đang tải...</div>
+  </div>
+
+  <div class="box" id="log-box">
+    <h3>📋 Nhật ký mở cửa</h3>
+    <table>
+      <thead>
+        <tr>
+          <th>STT</th>
+          <th>Thời gian</th>
+          <th>Phương thức</th>
+          <th>Giá trị</th>
+        </tr>
+      </thead>
+      <tbody id="log-body">
+        <tr>
+          <td colspan="4">⏳ Đang chờ dữ liệu...</td>
+        </tr>
+      </tbody>
+    </table>
+    <button class="btn-clear" onclick="clearLogs()">🗑 Xóa nhật ký</button>
+  </div>
+
+  <script>
+    async function fetchData() {
+      try {
+        const res = await fetch("/predict_tm", { method: "POST" });
+        const data = await res.json();
+        const resultBox = document.getElementById("result-box");
+
+        if (data.error) {
+          resultBox.innerHTML = `<span class="value">❌ ${data.error}</span>`;
+        } else {
+          resultBox.innerHTML = `
+            <div><strong>Nhãn:</strong> <span class="value">${data.label}</span></div>
+            <div><strong>Độ tự tin:</strong> <span class="value">${data.confidence}</span></div>
+            <div><strong>Thời gian:</strong> ${data.timestamp}</div>
+          `;
+        }
+
+        const res2 = await fetch("/access_data");
+        const mqttData = await res2.json();
+        document.getElementById("mqtt-box").innerHTML = `
+          <h3>Dữ liệu MQTT (access_data)</h3>
+          <pre>${JSON.stringify(mqttData, null, 2)}</pre>
+        `;
+      } catch (e) {
+        document.getElementById("result-box").innerHTML = "❌ Lỗi kết nối đến server.";
+      }
+    }
+
+    setInterval(fetchData, 1000);
+    window.onload = fetchData;
+
+
+    // Hàm kiểm tra trạng thái thêm/xóa khuôn mặt từ server
+    async function checkFaceAction() {
+      try {
+        const res = await fetch("/face_action");
+        const data = await res.json();
+        const action = data.action;
+
+        if (action === "add") {
+          document.getElementById("add-form").style.display = "block";
+          document.getElementById("delete-form").style.display = "none";
+          document.getElementById("face-form-box").scrollIntoView({ behavior: "smooth" });
+        } else if (action === "delete") {
+          document.getElementById("add-form").style.display = "none";
+          document.getElementById("delete-form").style.display = "block";
+          document.getElementById("face-form-box").scrollIntoView({ behavior: "smooth" });
+        } else {
+          document.getElementById("add-form").style.display = "none";
+          document.getElementById("delete-form").style.display = "none";
+        }
+      } catch (e) {
+        console.warn("Không thể lấy trạng thái face_action");
+      }
+    }
+
+
+    const logBody = document.getElementById("log-body");
+    let logList = [];
+    let logCount = 1;
+
+    const mqttOptions = {
+      username: "EvanJordan",
+      password: "Thanh94@",
+      protocol: "wss",
+    };
+
+    const client = mqtt.connect("wss://0959e8f58b7b4eff970d0713cc9c4bfd.s1.eu.hivemq.cloud:8884/mqtt", mqttOptions);
+
+    client.on("connect", () => {
+      console.log("✅ Đã kết nối MQTT!");
+      client.subscribe("esp32/access_log");
+      client.subscribe("esp32/face/cmd");
+    });
+
+    client.on("message", (topic, message) => {
+      if (topic === "esp32/access_log") {
+        const payload = message.toString();
+        const parts = payload.replace("PT:", "").split(",");
+        const method = parts[0];
+        const value = parts[1];
+        const time = new Date().toLocaleString("vi-VN");
+
+        logList.unshift({ stt: logCount++, time, method, value });
+        updateLogTable();
+      }
+      if (topic === "esp32/face/cmd") {
+        const cmd = message.toString();
+        if (cmd === "add") {
+          document.getElementById("add-form").style.display = "block";
+          document.getElementById("delete-form").style.display = "none";
+          document.getElementById("face-form-box").scrollIntoView({ behavior: "smooth" });
+        } else if (cmd === "delete") {
+          document.getElementById("add-form").style.display = "none";
+          document.getElementById("delete-form").style.display = "block";
+          document.getElementById("face-form-box").scrollIntoView({ behavior: "smooth" });
+        }
+      }
+    });
+
+    function updateLogTable() {
+      if (logList.length > 50) logList.pop();
+      logBody.innerHTML = logList.map(log => `
+        <tr>
+          <td>${log.stt}</td>
+          <td>${log.time}</td>
+          <td>${log.method}</td>
+          <td>${log.value}</td>
+        </tr>
+      `).join("");
+    }
+
+    function clearLogs() {
+      logList = [];
+      logCount = 1;
+      logBody.innerHTML = '<tr><td colspan="4">🗑 Nhật ký đã được xóa</td></tr>';
+    }
+
+    // Gửi yêu cầu thêm khuôn mặt mà không tải lại trang
+    document.getElementById("add-form").addEventListener("submit", async function (e) {
+      e.preventDefault(); // Ngăn submit truyền thống
+
+      const name = document.getElementById("add-name").value;
+      const statusDiv = document.getElementById("add-status");
+      statusDiv.innerText = "📸 Đang thêm khuôn mặt, vui lòng đợi...";
+
+      try {
+        const res = await fetch("/add_face", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+          },
+          body: "name=" + encodeURIComponent(name)
+        });
+
+        const data = await res.json();
+        if (data.error) {
+          statusDiv.style.color = "red";
+          statusDiv.innerText = "❌ Lỗi: " + data.error;
+        } else {
+          statusDiv.style.color = "green";
+          statusDiv.innerText = "✅ " + data.message;
+        }
+      } catch (err) {
+        statusDiv.style.color = "red";
+        statusDiv.innerText = "❌ Không thể kết nối server.";
+      }
+    });
+
+
+  </script>
+  <!-- <div class="box" id="face-form-box"> -->
+    <!-- <h3>➕ Thêm / Xóa khuôn mặt</h3> -->
+
+    <!-- Form thêm khuôn mặt -->
+    <!-- <form id="add-form" style="display: none;"> -->
+      <!-- <label>Nhập tên: <input type="text" id="add-name" required></label><br><br> -->
+      <!-- <button type="submit">📸 Bắt đầu thêm khuôn mặt</button> -->
+    <!-- </form> -->
+    <!-- <div id="add-status" style="margin-top: 10px; color: green;"></div> -->
+
+    <!-- Form xóa khuôn mặt -->
+    <!-- <form id="delete-form" method="POST" action="/delete_face" style="display: none;"> -->
+      <!-- <label>ID cần xoá: <input type="number" name="id" required></label><br><br> -->
+      <!-- <button type="submit">🗑 Xoá khuôn mặt</button> -->
+    <!-- </form> -->
+  <!-- </div> -->
+
+
+</body>
+
+</html>
